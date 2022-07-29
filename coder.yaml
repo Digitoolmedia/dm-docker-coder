@@ -1,0 +1,82 @@
+version: "3.9"
+
+services:
+  coder:
+    # This MUST be stable for our documentation and
+    # other automations.
+    image: ghcr.io/coder/coder:${CODER_VERSION:-latest}
+    tty: true
+    stdin_open: true
+    environment:
+      CODER_PG_CONNECTION_URL: "postgresql://${POSTGRES_USER:-username}:${POSTGRES_PASSWORD:-password}@coderdb:5432/${POSTGRES_DB:-coder}?sslmode=disable"
+      # You'll need to set CODER_ACCESS_URL to an IP or domain
+      # that workspaces can reach. This cannot be localhost
+      # or 127.0.0.1 for non-Docker templates!
+      CODER_ADDRESS: "0.0.0.0:7080"
+      CODER_ACCESS_URL: "https://${CODER_DOMAIN}"
+    networks:
+      - coder
+      - traefik-public
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - coderdb
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 3s
+        max_attempts: 5
+        window: 60s
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: ${NODE_PLACEMENT}
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.coder.rule: Host(`${CODER_DOMAIN}`)
+        traefik.http.routers.coder.entrypoints: websecure
+        traefik.http.services.coder.loadbalancer.server.port: 7080
+        traefik.http.routers.coder.tls.certresolver: letsencrypt
+
+
+
+
+  coderdb:
+    image: "postgres:14.2"
+    container_name: coderdb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-username} # The PostgreSQL user (useful to connect to the database)
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password} # The PostgreSQL password (useful to connect to the database)
+      POSTGRES_DB: ${POSTGRES_DB:-coder} # The PostgreSQL default database (automatically created at first launch)
+    networks:
+      - coder
+    volumes:
+      - coder_data:/var/lib/postgresql/data # Use "docker volume rm coder_coder_data" to reset Coder
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-username} -d ${POSTGRES_DB:-coder}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 3s
+        max_attempts: 5
+        window: 60s
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: ${NODE_PLACEMENT}
+
+
+networks:
+  coder:
+  traefik-public:
+    external: true
+
+volumes:
+  coder_data:
